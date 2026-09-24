@@ -1,5 +1,9 @@
 # Greenlight
 
+<img src="docs/assets/demo.svg" alt="greenlight scanning a local test target and finding missing security headers plus an exposed .env file" width="700" />
+
+<sub>Real recorded terminal session against a real local test server - real header/exposure checks, not fixtures.</sub>
+
 Greenlight is an authorized-use reconnaissance and misconfiguration scanner for penetration testers and security teams. Its defining feature is not any one scan module — it's the **authorization gate**: Greenlight refuses to scan any target that isn't clearly private/loopback unless you've explicitly recorded (or interactively confirmed) authorization to test it, and every scan is written to a local audit log. No gate, no scan.
 
 ## Acceptable Use
