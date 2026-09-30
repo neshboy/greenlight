@@ -1,7 +1,7 @@
 import { AuditEntry, ModuleResult, ScanOptions, Severity } from "./types.js";
 import { ensureAuthorized, EnsureAuthorizedOptions } from "./authz.js";
 import { appendAuditEntry } from "./audit.js";
-import { extractHost, extractPort } from "./utils/network.js";
+import { extractHost, extractPort, pinnedLookup } from "./utils/network.js";
 import { runHeaderCheck } from "./modules/headers.js";
 import { runTlsCheck } from "./modules/tls.js";
 import { runExposureCheck } from "./modules/exposure.js";
@@ -77,6 +77,18 @@ export async function runScan(target: string, userOpts: ScanRunOptions = {}): Pr
   const tlsPort = userOpts.httpsPort ?? explicitPort ?? 443;
   const results: ModuleResult[] = [];
 
+  // If `host` was a hostname resolved during the authorization check above,
+  // pin every connection this scan makes to that exact resolved address
+  // instead of letting each module below re-resolve DNS independently.
+  // Without this, a DNS-rebinding target (very low TTL record) could
+  // answer privately for the authorization check (granting a loopback
+  // exemption with no authorization record required) and then answer
+  // publicly for the actual header/TLS/exposure/port probes, bypassing the
+  // authorization gate entirely.
+  const lookup = decision.resolvedAddress
+    ? pinnedLookup(decision.resolvedAddress, decision.resolvedFamily ?? 4)
+    : undefined;
+
   for (const moduleName of opts.modules) {
     switch (moduleName) {
       case "dns":
@@ -84,17 +96,19 @@ export async function runScan(target: string, userOpts: ScanRunOptions = {}): Pr
         results.push(await runDnsCheck(host, { concurrency: opts.dnsConcurrency }));
         break;
       case "headers":
-        results.push(await runHeaderCheck(baseUrl, { timeoutMs: opts.httpTimeoutMs }));
+        results.push(await runHeaderCheck(baseUrl, { timeoutMs: opts.httpTimeoutMs, lookup }));
         break;
       case "tls":
-        results.push(await runTlsCheck(host, { timeoutMs: opts.httpTimeoutMs, port: tlsPort }));
+        results.push(await runTlsCheck(host, { timeoutMs: opts.httpTimeoutMs, port: tlsPort, lookup }));
         break;
       case "exposure":
-        results.push(await runExposureCheck(baseUrl, { timeoutMs: opts.httpTimeoutMs, concurrency: 5 }));
+        results.push(await runExposureCheck(baseUrl, { timeoutMs: opts.httpTimeoutMs, concurrency: 5, lookup }));
         break;
       case "ports": {
         const ports = opts.ports ?? DEFAULT_PORTS;
-        results.push(await runPortCheck(host, ports, { concurrency: opts.portConcurrency, timeoutMs: opts.portTimeoutMs }));
+        results.push(
+          await runPortCheck(host, ports, { concurrency: opts.portConcurrency, timeoutMs: opts.portTimeoutMs, lookup })
+        );
         break;
       }
     }

@@ -4,6 +4,18 @@ import { addAuthorization, listAuthorizations, revokeAuthorization } from "./aut
 import { printBanner, printScanReport, exitCodeFor } from "./report.js";
 import { parsePortSpec, MAX_PORTS_WITHOUT_OVERRIDE } from "./modules/ports.js";
 
+/**
+ * Parses a numeric CLI option, falling back to `fallback` only when the
+ * value isn't a finite number. Using `Number(x) || fallback` would silently
+ * replace an explicitly-passed `0` (a legitimate value for e.g.
+ * --port-timeout, --http-timeout, --days) with the default, since `0` is
+ * falsy in JS.
+ */
+function numberOption(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 export function buildProgram(): Command {
   const program = new Command();
   program
@@ -64,16 +76,16 @@ export function buildProgram(): Command {
         }
       }
 
-      const portConcurrency = Math.min(20, Math.max(1, Number(options.portConcurrency) || 20));
+      const portConcurrency = Math.min(20, Math.max(1, numberOption(options.portConcurrency, 20)));
 
       try {
         const result = await runScan(target, {
           authorizeFlag: Boolean(options.authorize),
           modules,
           ports,
-          portTimeoutMs: Number(options.portTimeout) || 1000,
+          portTimeoutMs: numberOption(options.portTimeout, 1000),
           portConcurrency,
-          httpTimeoutMs: Number(options.httpTimeout) || 5000,
+          httpTimeoutMs: numberOption(options.httpTimeout, 5000),
           scheme: options.scheme === "http" ? "http" : "https",
         });
 
@@ -104,7 +116,7 @@ export function buildProgram(): Command {
     .option("--days <n>", "number of days the authorization remains current", "30")
     .action((target: string, options) => {
       try {
-        const record = addAuthorization(target, options.note, Number(options.days) || 30);
+        const record = addAuthorization(target, options.note, numberOption(options.days, 30));
         console.log(`Authorization recorded for "${record.target}" (expires ${record.expiresAt}).`);
       } catch (err) {
         console.error(`Could not add authorization: ${(err as Error).message}`);

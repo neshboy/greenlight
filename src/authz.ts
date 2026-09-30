@@ -138,13 +138,21 @@ export async function ensureAuthorized(
   const host = extractHost(target);
 
   const privacy = await checkPrivacyExemption(target);
+  const { resolvedAddress, resolvedFamily } = privacy;
   if (privacy.isExempt) {
-    return { allowed: true, method: "loopback-exempt", reason: privacy.reason };
+    return { allowed: true, method: "loopback-exempt", reason: privacy.reason, resolvedAddress, resolvedFamily };
   }
 
   const record = findCurrentAuthorization(target);
   if (record) {
-    return { allowed: true, method: "authorization-file", record, reason: "current authorization record found" };
+    return {
+      allowed: true,
+      method: "authorization-file",
+      record,
+      reason: "current authorization record found",
+      resolvedAddress,
+      resolvedFamily,
+    };
   }
 
   if (options.authorizeFlag) {
@@ -155,6 +163,8 @@ export async function ensureAuthorized(
         allowed: true,
         method: "interactive-prompt",
         reason: "operator interactively confirmed authorization for this run",
+        resolvedAddress,
+        resolvedFamily,
       };
     }
     return {

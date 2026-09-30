@@ -58,6 +58,15 @@ export function extractHost(target: string): string {
     }
     return t;
   }
+  // A bare (unbracketed) IPv6 literal has no port to strip: a naive
+  // trailing ":port" strip can't be distinguished from the address's own
+  // hextets (e.g. "::1", "fe80::1", "2001:4860:4860::8888" all end in a
+  // colon followed by digits). Require bracket notation (e.g.
+  // "[::1]:8080") to pair an IPv6 host with an explicit port, matching the
+  // bracketed branch above.
+  if (net.isIPv6(t)) {
+    return t;
+  }
   const lastColon = t.lastIndexOf(":");
   if (lastColon !== -1 && /^\d+$/.test(t.slice(lastColon + 1))) {
     t = t.slice(0, lastColon);
@@ -82,6 +91,9 @@ export function extractPort(target: string): number | undefined {
     const m = rest.match(/^:(\d+)$/);
     return m ? Number(m[1]) : undefined;
   }
+  // See the matching check in extractHost(): a bare IPv6 literal never has
+  // a parseable trailing port, and its own hextets can look like one.
+  if (net.isIPv6(t)) return undefined;
   const lastColon = t.lastIndexOf(":");
   if (lastColon !== -1 && /^\d+$/.test(t.slice(lastColon + 1))) {
     return Number(t.slice(lastColon + 1));
@@ -92,6 +104,17 @@ export function extractPort(target: string): number | undefined {
 export interface PrivacyCheckResult {
   isExempt: boolean;
   reason: string;
+  /**
+   * Present when `target` was a hostname (not a literal IP or "localhost")
+   * that this check actually resolved via DNS. Callers that proceed with a
+   * scan should pin subsequent connections to this exact address (see
+   * `pinnedLookup`) instead of letting each module re-resolve DNS
+   * independently, so a target can't answer privately for this check (to
+   * pass the authorization gate) and publicly for the real probes
+   * (DNS rebinding).
+   */
+  resolvedAddress?: string;
+  resolvedFamily?: number;
 }
 
 /**
@@ -106,7 +129,36 @@ export interface PrivacyCheckResult {
  * still recognized as private. Resolution failures are treated as "not
  * exempt" (fail closed) rather than silently allowed.
  */
-export type LookupFn = (host: string) => Promise<{ address: string }[]>;
+export type LookupFn = (host: string) => Promise<{ address: string; family?: number }[]>;
+
+/**
+ * A `lookup`-option-compatible function, accepted by `http.request`,
+ * `https.request`, `tls.connect`, and `net.Socket#connect`, that always
+ * resolves to a single pinned address/family regardless of the hostname
+ * passed in. Used to pin every connection made during a single scan to the
+ * exact address that was checked by the authorization gate (see
+ * `PrivacyCheckResult.resolvedAddress`), instead of letting each module
+ * (headers/exposure via http(s), tls, raw TCP port checks) perform its own
+ * fresh DNS resolution after the gate has already made its decision.
+ */
+export function pinnedLookup(address: string, family: number): net.LookupFunction {
+  return (_hostname, options, callback) => {
+    // Modern Node (Happy Eyeballs / autoSelectFamily) calls custom `lookup`
+    // functions with `{ all: true }` and expects the callback to receive an
+    // *array* of addresses (err, addresses[]), not the single
+    // (err, address, family) form @types/node's LookupFunction type
+    // describes. Handle both shapes so pinning works regardless of Node
+    // version / autoSelectFamily setting.
+    const wantsAll = typeof options === "object" && options !== null && (options as { all?: boolean }).all === true;
+    if (wantsAll) {
+      (callback as unknown as (err: null, addresses: { address: string; family: number }[]) => void)(null, [
+        { address, family },
+      ]);
+    } else {
+      callback(null, address, family);
+    }
+  };
+}
 
 const defaultLookup: LookupFn = (host) => dns.lookup(host, { all: true, verbatim: true });
 
@@ -134,13 +186,22 @@ export async function checkPrivacyExemption(
       return { isExempt: false, reason: `hostname ${host} did not resolve to any address` };
     }
     const allPrivate = results.every((r) => isPrivateOrLoopbackLiteral(r.address));
+    const resolvedAddress = results[0].address;
+    const resolvedFamily = results[0].family ?? (net.isIPv6(resolvedAddress) ? 6 : 4);
     if (allPrivate) {
       return {
         isExempt: true,
         reason: `hostname ${host} resolves only to private/loopback addresses`,
+        resolvedAddress,
+        resolvedFamily,
       };
     }
-    return { isExempt: false, reason: `hostname ${host} resolves to a public address` };
+    return {
+      isExempt: false,
+      reason: `hostname ${host} resolves to a public address`,
+      resolvedAddress,
+      resolvedFamily,
+    };
   } catch (err) {
     return {
       isExempt: false,

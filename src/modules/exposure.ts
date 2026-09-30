@@ -1,3 +1,4 @@
+import net from "node:net";
 import { Finding, ModuleResult } from "../types.js";
 import { simpleGet } from "../utils/httpClient.js";
 import { runWithConcurrency } from "../utils/concurrency.js";
@@ -5,6 +6,8 @@ import { runWithConcurrency } from "../utils/concurrency.js";
 export interface ExposureCheckOptions {
   timeoutMs: number;
   concurrency: number;
+  /** See utils/network.ts's pinnedLookup; pins the connection to a specific address. */
+  lookup?: net.LookupFunction;
 }
 
 interface ExposurePath {
@@ -95,7 +98,7 @@ export async function runExposureCheck(baseUrl: string, opts: ExposureCheckOptio
   await runWithConcurrency(PATHS, { concurrency: opts.concurrency }, async (entry) => {
     const url = new URL(entry.path, baseUrl).toString();
     try {
-      const res = await simpleGet(url, { timeoutMs: opts.timeoutMs, maxBodyBytes: 50_000 });
+      const res = await simpleGet(url, { timeoutMs: opts.timeoutMs, maxBodyBytes: 50_000, lookup: opts.lookup });
       const finding = entry.describe(res.statusCode, res.body);
       if (finding) findings.push(finding);
     } catch (err) {
