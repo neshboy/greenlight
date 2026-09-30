@@ -5,6 +5,8 @@ import { Finding, ModuleResult } from "../types.js";
 export interface TlsCheckOptions {
   timeoutMs: number;
   port?: number;
+  /** See utils/network.ts's pinnedLookup; pins the connection to a specific address. */
+  lookup?: net.LookupFunction;
 }
 
 const OUTDATED_PROTOCOLS = new Set(["TLSv1", "TLSv1.1", "SSLv3", "SSLv2"]);
@@ -21,7 +23,7 @@ export async function runTlsCheck(host: string, opts: TlsCheckOptions): Promise<
   const port = opts.port ?? 443;
 
   try {
-    const info = await handshake(host, port, opts.timeoutMs);
+    const info = await handshake(host, port, opts.timeoutMs, opts.lookup);
     const findings = evaluateHandshake(info);
     return { module: "tls", findings, durationMs: Date.now() - start };
   } catch (err) {
@@ -119,7 +121,7 @@ export function evaluateHandshake(info: HandshakeInfo, now: number = Date.now())
   return findings;
 }
 
-function handshake(host: string, port: number, timeoutMs: number): Promise<HandshakeInfo> {
+function handshake(host: string, port: number, timeoutMs: number, lookup?: net.LookupFunction): Promise<HandshakeInfo> {
   return new Promise((resolve, reject) => {
     const socket = tls.connect(
       {
@@ -131,6 +133,7 @@ function handshake(host: string, port: number, timeoutMs: number): Promise<Hands
         ...(net.isIP(host) ? {} : { servername: host }),
         rejectUnauthorized: false, // we want to report on invalid certs, not throw on them
         timeout: timeoutMs,
+        ...(lookup ? { lookup } : {}),
       },
       () => {
         const cert = socket.getPeerCertificate(false);

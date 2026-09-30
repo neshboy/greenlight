@@ -44,6 +44,15 @@ export interface AuthorizationDecision {
   reason?: string;
   /** Present when method === "authorization-file". */
   record?: AuthorizationRecord;
+  /**
+   * Present when the target was a hostname that got resolved while making
+   * this decision. Callers should pin subsequent connections to this exact
+   * address (e.g. via `pinnedLookup`) rather than re-resolving DNS, to
+   * avoid a DNS-rebinding target answering differently for the
+   * authorization check than for the actual scan probes.
+   */
+  resolvedAddress?: string;
+  resolvedFamily?: number;
 }
 
 /** A recorded authorization for scanning a specific target. */

@@ -15,6 +15,8 @@ export type PortState = "open" | "closed" | "filtered";
 export interface PortCheckOptions {
   concurrency: number;
   timeoutMs: number;
+  /** See utils/network.ts's pinnedLookup; pins connections to a specific address. */
+  lookup?: net.LookupFunction;
 }
 
 interface PortResult {
@@ -42,7 +44,7 @@ export const RISKY_PORT_NOTES: Record<number, string> = {
 export async function runPortCheck(host: string, ports: number[], opts: PortCheckOptions): Promise<ModuleResult> {
   const start = Date.now();
   const results = await runWithConcurrency(ports, { concurrency: opts.concurrency }, (port) =>
-    checkPort(host, port, opts.timeoutMs)
+    checkPort(host, port, opts.timeoutMs, opts.lookup)
   );
 
   const findings: Finding[] = [];
@@ -81,7 +83,7 @@ export function describeOpenPort(port: number): Finding {
   };
 }
 
-function checkPort(host: string, port: number, timeoutMs: number): Promise<PortResult> {
+function checkPort(host: string, port: number, timeoutMs: number, lookup?: net.LookupFunction): Promise<PortResult> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     let settled = false;
@@ -101,7 +103,7 @@ function checkPort(host: string, port: number, timeoutMs: number): Promise<PortR
       else finish("filtered");
     });
 
-    socket.connect(port, host);
+    socket.connect({ port, host, ...(lookup ? { lookup } : {}) });
   });
 }
 

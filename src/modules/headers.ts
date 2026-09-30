@@ -1,8 +1,11 @@
+import net from "node:net";
 import { Finding, ModuleResult, Severity } from "../types.js";
 import { simpleGet } from "../utils/httpClient.js";
 
 export interface HeaderCheckOptions {
   timeoutMs: number;
+  /** See utils/network.ts's pinnedLookup; pins the connection to a specific address. */
+  lookup?: net.LookupFunction;
 }
 
 interface HeaderRule {
@@ -71,7 +74,7 @@ export async function runHeaderCheck(targetUrl: string, opts: HeaderCheckOptions
   const start = Date.now();
   const findings: Finding[] = [];
   try {
-    const res = await simpleGet(targetUrl, { timeoutMs: opts.timeoutMs });
+    const res = await simpleGet(targetUrl, { timeoutMs: opts.timeoutMs, lookup: opts.lookup });
     const isHttps = res.protocol === "https";
 
     for (const rule of RULES) {

@@ -1,5 +1,6 @@
 import http from "node:http";
 import https from "node:https";
+import net from "node:net";
 
 export interface SimpleResponse {
   statusCode: number;
@@ -13,6 +14,12 @@ export interface GetOptions {
   /** Cap on response body bytes read, to avoid unbounded memory use. */
   maxBodyBytes?: number;
   headers?: Record<string, string>;
+  /**
+   * Optional custom DNS resolution, e.g. to pin the connection to a
+   * specific address that was already checked by the authorization gate
+   * (see utils/network.ts's pinnedLookup) instead of re-resolving DNS.
+   */
+  lookup?: net.LookupFunction;
 }
 
 /**
@@ -52,30 +59,40 @@ export function simpleGet(
         // self-signed/misconfigured certs are exactly what we want to be
         // able to report on (see the dedicated TLS module for details).
         ...(isHttps ? { rejectUnauthorized: false } : {}),
+        ...(opts.lookup ? { lookup: opts.lookup } : {}),
       },
       (res) => {
         let received = 0;
         let body = "";
-        let truncated = false;
-        res.on("data", (chunk: Buffer) => {
-          received += chunk.length;
-          if (received > maxBodyBytes) {
-            if (!truncated) {
-              body += chunk.toString("utf8").slice(0, Math.max(0, maxBodyBytes - (received - chunk.length)));
-              truncated = true;
-            }
-            return;
-          }
-          body += chunk.toString("utf8");
-        });
-        res.on("end", () => {
+        let settled = false;
+
+        const finish = () => {
+          if (settled) return;
+          settled = true;
           resolve({
             statusCode: res.statusCode ?? 0,
             headers: res.headers,
             body,
             protocol: isHttps ? "https" : "http",
           });
+        };
+
+        res.on("data", (chunk: Buffer) => {
+          if (settled) return;
+          received += chunk.length;
+          if (received > maxBodyBytes) {
+            // Slice in whatever's left of the cap, then stop the transfer
+            // entirely: the cap exists to bound both memory *and* time/
+            // bandwidth, so a slow/unbounded body must not be left to keep
+            // trickling data (and keeping the request alive) past this point.
+            body += chunk.toString("utf8").slice(0, Math.max(0, maxBodyBytes - (received - chunk.length)));
+            finish();
+            res.destroy();
+            return;
+          }
+          body += chunk.toString("utf8");
         });
+        res.on("end", finish);
       }
     );
 
